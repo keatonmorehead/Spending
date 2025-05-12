@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Spending Entry → Google Sheets</title>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+    body{display:flex;justify-content:center;align-items:flex-start;min-height:100vh;background:#f5f7fa;padding:2rem;color:#222}
+    .card{background:#fff;border-radius:1rem;box-shadow:0 4px 20px rgba(0,0,0,.08);width:520px;max-width:94%;padding:2rem;display:flex;flex-direction:column;gap:1.25rem}
+    h1,h2{font-size:1.35rem;text-align:center;font-weight:600;margin-bottom:.25rem}
+    h2{font-size:1.05rem;margin-top:.75rem}
+    label{font-weight:600;font-size:.85rem;margin-bottom:.25rem;display:block}
+    input,select,button{width:100%;padding:.6rem .75rem;border-radius:.5rem;border:1px solid #ccc;font-size:1rem}
+    input:focus,select:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.15)}
+    button{cursor:pointer;background:#3b82f6;color:#fff;border:none;font-weight:600;transition:background .2s ease}
+    button:hover{background:#2463d3}
+    .row{display:flex;gap:1rem}
+    .row>*{flex:1}
+    #status{font-size:.9rem;text-align:center;min-height:1.4rem;word-break:break-word}
+    #status.error{color:#d32727}
+    #status.ok{color:#15803d}
+    .hidden{display:none}
+    ul{list-style:none;padding:0;margin:0;max-height:170px;overflow:auto}
+    li{font-size:.85rem;padding:.4rem .2rem;border-bottom:1px solid #eee}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Spending Entry</h1>
+
+    <!-- Expense input form -->
+    <form id="expenseForm">
+      <div>
+        <label for="expenseName">Expense Name</label>
+        <input id="expenseName" type="text" required placeholder="e.g. Spotify" />
+      </div>
+      <div>
+        <label for="expenseDate">Date of Purchase</label>
+        <input id="expenseDate" type="date" required />
+      </div>
+      <div class="row">
+        <div>
+          <label for="expenseCategory">Category</label>
+          <select id="expenseCategory" required>
+            <option value="" disabled selected>Select one…</option>
+            <option>Accounts Receivable</option>
+            <option>Rent</option>
+            <option>Utilities</option>
+            <option>Fun Money</option>
+            <option>Groceries & Eating Out</option>
+            <option>Gas</option>
+            <option>Hygiene & Health</option>
+            <option>Gear Investments</option>
+            <option>Drugs + Alcohol</option>
+            <option>Miscellaneous</option>
+            <option>General Life Maintanence</option>
+          </select>
+        </div>
+        <div>
+          <label for="expenseAmount">Amount ($)</label>
+          <input id="expenseAmount" type="number" step="0.01" required />
+        </div>
+      </div>
+      <button type="submit" id="queueBtn">➕ Queue Expense</button>
+    </form>
+
+    <!-- batch list -->
+    <section id="queueSection" class="hidden">
+      <h2>Queued Expenses</h2>
+      <ul id="queueList"></ul>
+      <button id="uploadBtn">⬆️ Push All to Google Sheets</button>
+    </section>
+
+    <p id="status"></p>
+  </div>
+
+  <script>
+  // ==== CONFIG ====
+  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxx6E9cV1o9iGQ0Qwznff5z4V6GBxo1qn4ZSDdKzO02Uzb3ILm157cnJiJmz6tG0d43rQ/exec";
+
+  const HEADER = [
+    "Expense Name","Date","Accounts Receivable","Rent","Utilities","Fun Money",
+    "Groceries & Eating Out","Gas","Hygiene & Health","Gear Investments",
+    "Drugs + Alcohol","Miscellaneous","General Life Maintanence"
+  ];
+
+  // ==== STATE ====
+  const queue = [];
+  const $ = id=>document.getElementById(id);
+  const setStatus=(msg,err=false)=>{const s=$("status");s.textContent=msg;s.className=err?'error':'ok'};
+  const toggle=(id,on)=>$(id).classList.toggle('hidden',!on);
+
+  // ==== UI helpers ====
+  function refreshQueueUI(){
+    toggle('queueSection', queue.length>0);
+    const ul=$("queueList");
+    ul.innerHTML='';
+    queue.forEach(r=>{
+      const li=document.createElement('li');
+      const amt = Object.values(r).find(v=>typeof v==='number');
+      li.textContent=`${r.Date} · ${r['Expense Name']} — $${amt}`;
+      ul.appendChild(li);
+    });
+  }
+
+  // ==== Form submit ====
+  $("expenseForm").addEventListener('submit',e=>{
+    e.preventDefault();
+    const name=$("expenseName").value.trim();
+    const date=$("expenseDate").value;
+    const cat=$("expenseCategory").value;
+    const amt=parseFloat($("expenseAmount").value);
+    if(!name||!date||!cat||isNaN(amt)) return setStatus('Fill every field',true);
+    const row=HEADER.reduce((o,k)=>(o[k]='',o),{});
+    row['Expense Name']=name;
+    row['Date']=date;
+    row[cat]=amt;
+    queue.push(row);
+    e.target.reset();
+    refreshQueueUI();
+    setStatus('Queued ✔️');
+  });
+
+  // ==== Push all ====
+  $("uploadBtn").addEventListener('click',async()=>{
+    if(!queue.length) return;
+    setStatus(`Uploading ${queue.length}…`);
+    try{
+      /*
+         Use a CORS‑simple POST:  only allowed headers → Content-Type must be
+         text/plain, application/x-www-form-urlencoded, or multipart/form-data.
+         We pick text/plain and stringify the payload.  No pre‑flight, and Apps
+         Script can still JSON.parse the body.
+      */
+      const payload = JSON.stringify({rows: queue});
+      const res = await fetch(WEB_APP_URL,{
+        method:'POST',
+        headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body: payload
+      });
+      if(!res.ok){ throw new Error(`${res.status} ${res.statusText}`); }
+      queue.length = 0;
+      refreshQueueUI();
+      setStatus('All expenses pushed ✔️');
+    }catch(err){
+      console.error(err);
+      setStatus('Upload failed: '+err.message,true);
+    }
+  });
+  </script>
+</body>
+</html>
